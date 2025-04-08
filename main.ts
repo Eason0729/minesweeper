@@ -30,10 +30,9 @@ class MineSlot {
 export class MineBoard {
   private slots: Record<Position, MineSlot> = {};
 
-  private revealCount: number = 0;
-  private totalSpaceCount: number = 0;
-  private randomer: (x: number, y: number) => boolean;
+  private mineCount: number;
   public state: "playing" | "dead" | "win" = "playing";
+  public revealCount: number = 0;
 
   public width: number;
   public height: number;
@@ -42,12 +41,51 @@ export class MineBoard {
   constructor(
     width: number,
     height: number,
-    randomer?: (x: number, y: number) => boolean,
+    mineCount: number,
+  );
+  constructor(
+    width: number,
+    height: number,
+    slots: string,
+  );
+  constructor(
+    width: number,
+    height: number,
+    mineCountOrSlots: number | string = 0,
   ) {
-    this.width = width;
-    this.height = height;
-    this.randomer = randomer || (() => Math.random() < 0.2);
+    if (typeof mineCountOrSlots === "string") {
+      console.warn("running test, MineBoard is not verified");
+      const rows = mineCountOrSlots.trim().split("\n")
+        .map((row) => row.trim().split(/\s+/));
+
+      this.width = rows[0].length;
+      this.height = rows.length;
+      this.mineCount = 0;
+
+      for (let y = 0; y < this.height; y++) {
+        for (let x = 0; x < this.width; x++) {
+          const hasMine = rows[y][x] === "x";
+          const position = `${x}-${y}` as Position;
+
+          this.slots[position] = new MineSlot(hasMine);
+
+          if (hasMine) {
+            this.mineCount++;
+          }
+        }
+      }
+      this.fieldInited = true;
+      this.initNearbyMine();
+    } else {
+      this.width = width;
+      this.height = height!;
+      this.mineCount = mineCountOrSlots!;
+      if (mineCountOrSlots! >= width * height) {
+        throw Error("Too many mines");
+      }
+    }
   }
+
   private isVaildPosition(x: number, y: number) {
     return !(x < 0 || x >= this.width || y < 0 || y >= this.height);
   }
@@ -73,19 +111,26 @@ export class MineBoard {
 
     const clickPosition = `${x}-${y}` as Position;
 
-    for (let i = 0; i < this.width; i++) {
-      for (let j = 0; j < this.height; j++) {
-        const position = `${i}-${j}` as Position;
-        const hasMine = (position == clickPosition)
-          ? false
-          : this.randomer(i, j);
+    const positions = Array.from(
+      { length: this.width * this.height },
+      (_, index) =>
+        `${Math.floor(index / this.width)}-${index % this.height}` as Position,
+    ).filter((position) => position !== clickPosition);
 
-        this.slots[position] = new MineSlot(hasMine);
-
-        if (!hasMine) this.totalSpaceCount++;
-      }
+    for (let i = positions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [positions[i], positions[j]] = [positions[j], positions[i]];
     }
 
+    positions.push(clickPosition);
+
+    positions.forEach((position, i) => {
+      this.slots[position] = new MineSlot(i < this.mineCount);
+    });
+
+    this.initNearbyMine();
+  }
+  private initNearbyMine() {
     for (let i = 0; i < this.width; i++) {
       for (let j = 0; j < this.height; j++) {
         const position = `${i}-${j}` as Position;
@@ -158,7 +203,9 @@ export class MineBoard {
       };
     });
 
-    if (this.revealCount === this.totalSpaceCount) this.state = "win";
+    if (this.revealCount === (this.width * this.height - this.mineCount)) {
+      this.state = "win";
+    }
 
     return {
       state: this.state,
@@ -167,9 +214,19 @@ export class MineBoard {
   }
 }
 
+Deno.test("MineBoard init", () => {
+  const board = new MineBoard(5, 5, 24);
+
+  assertEquals(board.width, 5);
+  assertEquals(board.height, 5);
+
+  const result = board.click(2, 2);
+
+  assertEquals(result.state, "win");
+});
+
 Deno.test("MineBoard click on safe cell", () => {
-  const fixedRandomer = () => false;
-  const board = new MineBoard(5, 5, fixedRandomer);
+  const board = new MineBoard(5, 5, 0);
 
   const result = board.click(2, 2);
 
@@ -186,16 +243,13 @@ Deno.test("MineBoard click on safe cell", () => {
 });
 
 Deno.test("MineBoard reveals with mine hints", () => {
-  // 1 1 1 0 0
-  // 1 x 1 0 0
-  // 2 2 2 0 0
-  // 1 x 1 0 0
-  // 1 1 1 0 0
-  const fixedRandomer = (x: number, y: number) => {
-    return (x === 1 && y === 1) || (x === 1 && y === 3);
-  };
-
-  const board = new MineBoard(5, 5, fixedRandomer);
+  const seed = `
+  _ _ _ _ _
+  _ x _ _ _
+  _ _ _ _ _
+  _ x _ _ _
+  _ _ _ _ _`;
+  const board = new MineBoard(5, 5, seed);
 
   const result = board.click(3, 2);
 
@@ -208,8 +262,14 @@ Deno.test("MineBoard reveals with mine hints", () => {
 });
 
 Deno.test("MineBoard click on mine", () => {
-  const fixedRandomer = () => true;
-  const board = new MineBoard(5, 5, fixedRandomer);
+  const seed = `
+  _ _ _ _ _
+  _ _ _ _ _
+  _ _ x _ _
+  _ _ _ _ _
+  _ _ _ _ _`;
+
+  const board = new MineBoard(5, 5, seed);
 
   board.click(2, 3);
   const result = board.click(2, 2);
